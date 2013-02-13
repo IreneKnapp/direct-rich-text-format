@@ -1,0 +1,50 @@
+name: direct-rich-text-format
+version: 1.0
+build-type: Simple
+license: BSD3
+license-file: LICENSE
+copyright: Copyright (c) 2013 Irene Knapp
+author: Irene Knapp <irene.knapp@icloud.com>
+maintainer: irene.knapp@icloud.com
+homepage: http://ireneknapp.com/software/
+bug-reports: https://github.com/IreneKnapp/direct-rich-text-format/issues/new
+category: Text
+synopsis: Parser and AST for RTF, Microsoft's "Rich Text Format".
+Cabal-version: >= 1.10
+Build-type: Simple
+description:
+  This package is a parser and abstract syntax tree for RTF, Microsoft's
+  "Rich Text Format".
+  .
+  Release history:
+  .
+  [Version 1.0] Initial release.  Basic functionality in place.
+
+Source-Repository head
+  type: git
+  location: git://github.com/IreneKnapp/direct-rich-text-format.git
+
+Library
+  exposed-modules: Text.RTF
+  hs-source-dirs: Haskell
+  build-depends: base >= 4.1 && < 5,
+                 bytestring >= 0.9.2.1 && < 1,
+                 text >= 0.11 && < 1
+  ghc-options: -Wall -fwarn-tabs -threaded
+  default-language: Haskell2010
+
+test-suite test
+  type: exitcode-stdio-1.0
+
+  hs-source-dirs: Haskell
+  main-is: Main.hs
+  other-modules: Text.RTF
+
+  ghc-options: -Wall -fwarn-tabs -threaded
+
+  default-language: Haskell2010
+
+  build-depends: base >= 4.1 && < 5,
+                 bytestring >= 0.9.2.1 && < 1,
+                 text >= 0.11 && < 1
+
