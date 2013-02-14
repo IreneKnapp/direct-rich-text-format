@@ -31,7 +31,8 @@ import Prelude
    (<=),
    (/=),
    (&&),
-   (||))
+   (||),
+   (++))
 
 
 data LowRTF
@@ -100,13 +101,39 @@ deserializeGroup = do
           '}' -> return $ finish itemsSoFar textSoFar
           '{' -> do
             subgroup <- deserializeGroup
-            loop (finish itemsSoFar textSoFar ++ subgroup) ""
+            loop (finish itemsSoFar textSoFar ++ [subgroup]) ""
           '\\' -> do
             escape <- deserializeEscape
             loop (finish itemsSoFar textSoFar ++ escape) ""
           _ -> loop itemsSoFar (T.snoc textSoFar c)
+  loop [] T.empty
 
 
 deserializeEscape :: BF.Deserialization LowRTF
 deserializeEscape = do
-
+ c <- deserializeCharacter
+ if Ch.isAlpha c
+   then do
+     let loopAlpha soFar = do
+           position <- BF.tell
+           c <- deserializeCharacter
+           if Ch.isAlpha c
+             then loopAlpha $ T.concat [soFar, T.singleton c]
+             else if Ch.isDigit c
+                    then loopDigit soFar $ T.singleton c
+                    else do
+                      BF.seek position
+                      return $ ControlWord soFar Nothing
+         loopDigit alpha soFar = do
+           position <- BF.tell
+           c <- deserializeCharacter
+           if Ch.isDigit c
+             then loopDigit alpha $ T.concat [soFar, T.singleton c]
+             else do
+               BF.seek position
+               case read soFar of
+                      [(number, _)] ->
+                        return $ ControlWord soFar $ Just (read soFar)
+                      _ -> BF.throw Failure
+     loopAlpha $ T.singleton c
+  else return $ ControlSymbol c
