@@ -118,10 +118,12 @@ deserializeEscape = do
         c <- deserializeCharacter
         if Ch.isAlpha c
           then loopAlpha $ T.concat [soFar, T.singleton c]
-          else if Ch.isDigit c
+          else if (Ch.isDigit c) || (c == '-')
                  then loopDigit soFar $ T.singleton c
                  else do
-                   BF.seek BF.OffsetFromStart position
+                   if c == ' '
+                     then return ()
+                     else BF.seek BF.OffsetFromStart position
                    return $ ControlWord soFar Nothing
       loopDigit alpha soFar = do
         position <- BF.tell
@@ -129,12 +131,20 @@ deserializeEscape = do
         if Ch.isDigit c
           then loopDigit alpha $ T.concat [soFar, T.singleton c]
           else do
-            BF.seek BF.OffsetFromStart position
+            if c == ' '
+              then return ()
+              else BF.seek BF.OffsetFromStart position
             case reads $ T.unpack soFar of
               [(number, "")] -> return $ ControlWord soFar $ Just number
               _ -> BF.throw Failure
   c <- deserializeCharacter
   if Ch.isAlpha c
-    then loopAlpha $ T.singleton c
+    then do
+      result <- loopAlpha $ T.singleton c
+      case result of
+        ControlWord "bin" (Just count) -> do
+          data' <- BF.read count
+          return $ Data data'
+        _ -> return result
     else return $ ControlSymbol c
 
