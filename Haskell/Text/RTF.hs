@@ -24,6 +24,8 @@ import Prelude
    Integral(..),
    fromIntegral,
    return,
+   mapM,
+   mapM_,
    ($),
    (.),
    (>>=),
@@ -37,6 +39,8 @@ import Prelude
    (||),
    (++))
 
+import Debug.Trace
+
 
 data LowRTF
   = ControlWord T.Text (Maybe Int)
@@ -44,6 +48,20 @@ data LowRTF
   | Group [LowRTF]
   | Text T.Text
   | Data BS.ByteString
+  deriving (Show)
+
+
+data RTF =
+  RTF {
+      rtfParagraphs :: [Paragraph]
+    }
+  deriving (Show)
+
+
+data Paragraph =
+  Paragraph {
+      paragraphText :: T.Text
+    }
   deriving (Show)
 
 
@@ -56,7 +74,7 @@ instance BF.SerializationFailure Failure where
     Ty.cast failure
 
 
-readFile :: FilePath -> IO (Maybe LowRTF)
+readFile :: FilePath -> IO (Maybe RTF)
 readFile filePath = do
   eitherResult <- BF.runDeserializationFromFile deserialize filePath
   case eitherResult of
@@ -64,14 +82,14 @@ readFile filePath = do
     Right result -> return $ Just result
 
 
-readByteString :: BS.ByteString -> Maybe LowRTF
+readByteString :: BS.ByteString -> Maybe RTF
 readByteString data' =
   let eitherResult = BF.runDeserializationFromByteString deserialize data'
   in case eitherResult of
        Left _ -> Nothing
        Right result -> Just result
 
-deserialize :: BF.Deserialization LowRTF
+deserialize :: BF.Deserialization RTF
 deserialize = do
   c <- deserializeCharacter
   result <- case c of
@@ -79,7 +97,9 @@ deserialize = do
               _ -> BF.throw Failure
   isEOF <- BF.isEOF
   if isEOF
-    then return result
+    then case parse result of
+           Nothing -> BF.throw Failure
+           Just result' -> return result'
     else BF.throw Failure
 
 
@@ -147,4 +167,32 @@ deserializeEscape = do
           return $ Data data'
         _ -> return result
     else return $ ControlSymbol c
+
+
+parse :: LowRTF -> Maybe RTF
+parse low = do
+  case low of
+    Group [_, body] -> do
+      paragraphs <- parseBody body
+      traceShow paragraphs $ return ()
+      return $ RTF {
+                   rtfParagraphs = paragraphs
+                 }
+    _ -> Nothing
+
+
+parseBody :: LowRTF -> Maybe [Paragraph]
+parseBody low = do
+  flatText <- flatten low
+  return [Paragraph {
+              paragraphText = flatText
+            }]
+
+
+flatten :: LowRTF -> Maybe T.Text
+flatten (ControlWord _ _) = return T.empty
+flatten (ControlSymbol _) = return T.empty
+flatten (Group items) = mapM flatten items >>= return . T.concat
+flatten (Text text) = return text
+flatten (Data _) = return T.empty 
 
