@@ -39,8 +39,6 @@ import Prelude
    (||),
    (++))
 
-import Debug.Trace
-
 
 data LowRTF
   = ControlWord T.Text (Maybe Int)
@@ -172,9 +170,8 @@ deserializeEscape = do
 parse :: LowRTF -> Maybe RTF
 parse low = do
   case low of
-    Group [_, body] -> do
-      paragraphs <- parseBody body
-      traceShow paragraphs $ return ()
+    Group (_ : body) -> do
+      paragraphs <- parseBody (Group body)
       return $ RTF {
                    rtfParagraphs = paragraphs
                  }
