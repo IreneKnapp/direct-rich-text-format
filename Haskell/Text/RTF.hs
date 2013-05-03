@@ -5,13 +5,17 @@ module Text.RTF
   where
 
 import qualified BinaryFiles as BF
+import qualified Control.Monad.Identity as MTL
 import qualified Data.ByteString as BS
 import qualified Data.Char as Ch
+import qualified Data.Conduit as C
+import qualified Data.Conduit.List as C
 import qualified Data.Text as T
 import qualified Data.Typeable as Ty
 
 import Prelude
-  (Maybe(..),
+  (Bool(..),
+   Maybe(..),
    Either(..),
    Int,
    IO,
@@ -170,26 +174,31 @@ deserializeEscape = do
 parse :: LowRTF -> Maybe RTF
 parse low = do
   case low of
-    Group (_ : body) -> do
-      paragraphs <- parseBody (Group body)
-      return $ RTF {
-                   rtfParagraphs = paragraphs
-                 }
+    Group (_ : body) ->
+      let paragraphs = parseBody body
+      in Just $ RTF {
+                    rtfParagraphs = paragraphs
+                  }
     _ -> Nothing
 
 
-parseBody :: LowRTF -> Maybe [Paragraph]
-parseBody low = do
-  flatText <- flatten low
-  return [Paragraph {
-              paragraphText = flatText
-            }]
+parseBody :: [LowRTF] -> [Paragraph]
+parseBody items = MTL.runIdentity $ do
+  yieldActions items C.$$ C.consume
 
 
-flatten :: LowRTF -> Maybe T.Text
-flatten (ControlWord _ _) = return T.empty
-flatten (ControlSymbol _) = return T.empty
-flatten (Group items) = mapM flatten items >>= return . T.concat
-flatten (Text text) = return text
-flatten (Data _) = return T.empty 
+yieldActions :: [LowRTF] -> C.Source MTL.Identity Paragraph
+yieldActions [] = return ()
+yieldActions (low:rest) = do
+  case low of
+    ControlWord _ _ -> return ()
+    ControlSymbol _ -> return ()
+    Group items -> do
+      yieldActions items
+    Text text -> do
+      C.yield $ Paragraph {
+                    paragraphText = text
+                  }
+    Data _ -> return ()
+  yieldActions rest
 
