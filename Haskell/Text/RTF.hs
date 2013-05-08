@@ -15,6 +15,7 @@ import qualified Data.Typeable as Ty
 
 import Prelude
   (Bool(..),
+   not,
    Maybe(..),
    Either(..),
    Int,
@@ -64,6 +65,16 @@ data Paragraph =
   Paragraph {
       paragraphText :: T.Text
     }
+  deriving (Show)
+
+
+data Action
+  = ControlWordAction T.Text (Maybe Int)
+  | ControlSymbolAction Char
+  | GroupStartAction
+  | GroupEndAction
+  | TextAction T.Text
+  | DataAction BS.ByteString
   deriving (Show)
 
 
@@ -184,21 +195,70 @@ parse low = do
 
 parseBody :: [LowRTF] -> [Paragraph]
 parseBody items = MTL.runIdentity $ do
-  yieldActions items C.$$ C.consume
+  yieldActions items
+  C.=$= separateParagraphs
+  C.=$= C.concatMapM (\actions ->
+                  C.sourceList actions
+                  C.=$= processParagraph
+                  C.$$ C.consume)
+  C.$$ C.consume
 
 
-yieldActions :: [LowRTF] -> C.Source MTL.Identity Paragraph
+yieldActions :: [LowRTF] -> C.Source MTL.Identity Action
 yieldActions [] = return ()
 yieldActions (low:rest) = do
   case low of
-    ControlWord _ _ -> return ()
-    ControlSymbol _ -> return ()
+    ControlWord text maybeInt -> do
+      C.yield $ ControlWordAction text maybeInt
+    ControlSymbol c -> do
+      C.yield $ ControlSymbolAction c
     Group items -> do
+      C.yield $ GroupStartAction
       yieldActions items
+      C.yield $ GroupEndAction
     Text text -> do
-      C.yield $ Paragraph {
-                    paragraphText = text
-                  }
-    Data _ -> return ()
+      C.yield $ TextAction text
+    Data data' -> do
+      C.yield $ DataAction data'
   yieldActions rest
+
+
+separateParagraphs :: C.Conduit Action MTL.Identity [Action]
+separateParagraphs = do
+  let loop soFar = do
+        maybeAction <- C.await
+        case maybeAction of
+          Just action@(ControlSymbolAction '\n') -> do
+            maybeNextAction <- C.await
+            case maybeNextAction of
+              Just (ControlSymbolAction '\n') -> do
+                C.yield soFar
+                loop []
+              Just nextAction -> do
+                loop (soFar ++ [action, nextAction])
+              Nothing -> do
+                C.yield (soFar ++ [action])
+          Just action -> do
+            loop (soFar ++ [action])
+          Nothing -> do
+            case soFar of
+             [] -> return ()
+             _ -> C.yield soFar
+  loop []
+
+
+processParagraph :: C.Conduit Action MTL.Identity Paragraph
+processParagraph = do
+  let loop textSoFar = do
+        maybeAction <- C.await
+        case maybeAction of
+          Just (TextAction text) -> do
+            loop (T.concat [textSoFar, text])
+          Nothing -> do
+            C.yield $ Paragraph {
+                          paragraphText = textSoFar
+                        }
+          _ -> do
+            loop textSoFar
+  loop ""
 
