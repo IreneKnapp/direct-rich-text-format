@@ -12,6 +12,7 @@ import qualified Data.Conduit as C
 import qualified Data.Conduit.List as C
 import qualified Data.Text as T
 import qualified Data.Typeable as Ty
+import qualified Numeric as Nu
 
 import Prelude
   (Bool(..),
@@ -196,6 +197,7 @@ parse low = do
 parseBody :: [LowRTF] -> [Paragraph]
 parseBody items = MTL.runIdentity $ do
   yieldActions items
+  C.=$= processEscapes
   C.=$= separateParagraphs
   C.=$= C.concatMapM (\actions ->
                   C.sourceList actions
@@ -221,6 +223,51 @@ yieldActions (low:rest) = do
     Data data' -> do
       C.yield $ DataAction data'
   yieldActions rest
+
+
+processEscapes :: C.Conduit Action MTL.Identity Action
+processEscapes = do
+  let loop textSoFar = do
+        maybeAction <- C.await
+        case maybeAction of
+          Just action@(ControlSymbolAction '\'') -> do
+            maybeNextAction <- C.await
+            case maybeNextAction of
+              Just action -> do
+                gotAction textSoFar action
+              Nothing -> do
+                yieldIfApplicable textSoFar
+          -- TODO stuff goes here
+      gotAction textSoFar action = do
+        case action of
+          TextAction textHere -> do
+            let escapeSequence = T.take 2 textHere
+                restText = T.drop 2 textHere
+                maybeEscapedText = decodeEscape escapeSequence
+                outputText =
+                  case maybeEscapedText of
+                    Nothing ->
+                      T.concat [textSoFar, textHere]
+                    Just escapedText ->
+                      T.concat [textSoFar, escapedText, restText]
+            loop outputText
+          action -> do
+            yieldIfApplicable textSoFar
+            gotAction "" action
+      yieldIfApplicable textSoFar = do
+        if not $ T.null textSoFar
+          then C.yield $ TextAction textSoFar
+          else return ()
+  loop ""
+
+
+decodeEscape :: T.Text -> Maybe T.Text
+decodeEscape text
+  | (T.length text == 2) =
+    case Nu.readHex $ T.unpack text of
+      [(codepoint, "")] -> Just $ T.pack [Ch.chr codepoint]
+      _ -> Nothing
+  | True = Nothing
 
 
 separateParagraphs :: C.Conduit Action MTL.Identity [Action]
