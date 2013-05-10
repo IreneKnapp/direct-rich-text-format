@@ -186,7 +186,7 @@ deserializeEscape = do
 parse :: LowRTF -> Maybe RTF
 parse low = do
   case low of
-    Group (_ : body) ->
+    Group body ->
       let paragraphs = parseBody body
       in Just $ RTF {
                     rtfParagraphs = paragraphs
@@ -197,6 +197,7 @@ parse low = do
 parseBody :: [LowRTF] -> [Paragraph]
 parseBody items = MTL.runIdentity $ do
   yieldActions items
+  C.=$= skipHead
   C.=$= processEscapes
   C.=$= separateParagraphs
   C.=$= C.concatMapM (\actions ->
@@ -223,6 +224,33 @@ yieldActions (low:rest) = do
     Data data' -> do
       C.yield $ DataAction data'
   yieldActions rest
+
+
+skipHead :: C.Conduit Action MTL.Identity Action
+skipHead = do
+  let loopInHead = do
+        maybeAction <- C.await
+        case maybeAction of
+          Just (TextAction text) -> do
+            let (_, point) = T.breakOn "\n\n" text
+            if T.null point
+              then loopInHead
+              else do
+                let after = T.drop 2 point
+                if T.null after
+                  then return ()
+                  else C.yield $ TextAction after
+                loopInBody
+          Just _ -> loopInHead
+          Nothing -> return ()
+      loopInBody = do
+        maybeAction <- C.await
+        case maybeAction of
+          Just action -> do
+            C.yield action
+            loopInBody
+          Nothing -> return ()
+  loopInHead
 
 
 processEscapes :: C.Conduit Action MTL.Identity Action
