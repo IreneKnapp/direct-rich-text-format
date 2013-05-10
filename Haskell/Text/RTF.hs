@@ -230,15 +230,26 @@ processEscapes = do
   let loop textSoFar = do
         maybeAction <- C.await
         case maybeAction of
-          Just action@(ControlSymbolAction '\'') -> do
+          Just (ControlSymbolAction '\'') -> do
             maybeNextAction <- C.await
             case maybeNextAction of
               Just action -> do
-                gotAction textSoFar action
+                gotActionAfterEscape textSoFar action
               Nothing -> do
                 yieldIfApplicable textSoFar
-          -- TODO stuff goes here
+          Just action -> do
+            gotAction textSoFar action
+          Nothing -> do
+            yieldIfApplicable textSoFar
       gotAction textSoFar action = do
+        case action of
+          TextAction textHere -> do
+            loop $ T.concat [textSoFar, textHere]
+          _ -> do
+            yieldIfApplicable textSoFar
+            C.yield action
+            loop ""
+      gotActionAfterEscape textSoFar action = do
         case action of
           TextAction textHere -> do
             let escapeSequence = T.take 2 textHere
@@ -251,7 +262,7 @@ processEscapes = do
                     Just escapedText ->
                       T.concat [textSoFar, escapedText, restText]
             loop outputText
-          action -> do
+          _ -> do
             yieldIfApplicable textSoFar
             gotAction "" action
       yieldIfApplicable textSoFar = do
