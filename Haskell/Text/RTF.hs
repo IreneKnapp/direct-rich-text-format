@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings, DeriveDataTypeable #-}
 module Text.RTF
-  (readFile,
+  (RTF(..),
+   Paragraph(..),
+   readFile,
    readByteString)
   where
 
