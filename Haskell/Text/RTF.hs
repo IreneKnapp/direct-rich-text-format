@@ -11,7 +11,8 @@ import qualified Data.Text as T
 import qualified Data.Typeable as Ty
 
 import Prelude
-  (Maybe(..),
+  (Bool(..),
+   Maybe(..),
    Either(..),
    Int,
    IO,
@@ -24,6 +25,7 @@ import Prelude
    Integral(..),
    fromIntegral,
    return,
+   map,
    mapM,
    mapM_,
    ($),
@@ -51,7 +53,57 @@ data LowRTF
 
 data RTF =
   RTF {
+      rtfHeader :: Header,
       rtfParagraphs :: [Paragraph]
+    }
+  deriving (Show)
+
+
+data Header =
+  Header {
+      headerVersion :: Int,
+      headerFbidis :: Bool,
+      headerCharacterSet :: CharacterSet,
+      headerCodepage :: Maybe Int,
+      headerFrom :: Maybe From,
+      headerDefaultPlainFont :: Maybe Int,
+      headerDefaultBidirectionalFont :: Maybe Int,
+      headerDefaultStylesheetFonts :: Maybe StylesheetFonts,
+      headerDefaultPlainLanguage :: Maybe Int,
+      headerDefaultEastAsianLanguage :: Maybe Int,
+      headerDefaultMiddleEasternLanguage :: Maybe Int,
+      headerFontTable :: Maybe FontTable
+    }
+  deriving (Show)
+
+
+data CharacterSet
+  = ASCIICharacterSet
+  | MacRomanCharacterSet
+  | MicrosoftDOSCharacterSet
+  | OS2CharacterSet
+  deriving (Show)
+
+
+data From
+  = FromText
+  | FromHTML Int
+  | FromCocoa Int
+  deriving (Show)
+
+
+data StylesheetFonts =
+  StylesheetFonts {
+      stylesheetFontsEastAsian :: Int,
+      stylesheetFontsPlain :: Int,
+      stylesheetFontsHigh :: Int,
+      stylesheetFontsBidirectional :: Int
+    }
+  deriving (Show)
+
+
+data FontTable =
+  FontTable {
     }
   deriving (Show)
 
@@ -153,7 +205,7 @@ deserializeEscape = do
               then return ()
               else BF.seek BF.OffsetFromStart position
             case reads $ T.unpack soFar of
-              [(number, "")] -> return $ ControlWord soFar $ Just number
+              [(number, "")] -> return $ ControlWord alpha $ Just number
               _ -> BF.throw Failure
   c <- deserializeCharacter
   if Ch.isAlpha c
@@ -170,24 +222,140 @@ deserializeEscape = do
 parse :: LowRTF -> Maybe RTF
 parse low = do
   case low of
-    Group (_ : body) -> do
-      paragraphs <- parseBody (Group body)
+    Group content -> do
+      (header, body) <- parseHeader content
+      paragraphs <- parseBody content
       return $ RTF {
+                   rtfHeader = header,
                    rtfParagraphs = paragraphs
                  }
     _ -> Nothing
 
 
-parseBody :: LowRTF -> Maybe [Paragraph]
+parseHeader :: [LowRTF] -> Maybe (Header, [LowRTF])
+parseHeader low = do
+  (version, low) <-
+    case low of
+      (ControlWord "rtf" (Just 1) : rest) -> return (1, rest)
+      _ -> Nothing
+  (fbidis, low) <-
+    case low of
+      (ControlWord "fbidis" Nothing : rest) -> return (True, rest)
+      _ -> return (False, low)
+  (characterSet, low) <-
+    case low of
+      (ControlWord "ansi" Nothing : rest) ->
+        return (ASCIICharacterSet, rest)
+      (ControlWord "mac" Nothing : rest) ->
+        return (MacRomanCharacterSet, rest)
+      (ControlWord "pc" Nothing : rest) ->
+        return (MicrosoftDOSCharacterSet, rest)
+      (ControlWord "pca" Nothing : rest) ->
+        return (OS2CharacterSet, rest)
+      _ -> return (ASCIICharacterSet, low)
+  (codepage, low) <-
+    case low of
+      (ControlWord "ansicpg" (Just codepage) : rest) ->
+        return (Just codepage, rest)
+      _ -> return (Nothing, low)
+  (from, low) <-
+    case low of
+      (ControlWord "fromtext" Nothing : rest) ->
+        return (Just FromText, rest)
+      (ControlWord "fromhtml" (Just version) : rest) ->
+        return (Just $ FromHTML version, rest)
+      (ControlWord "cocoartf" (Just version) : rest) ->
+        return (Just $ FromCocoa version, rest)
+      _ -> return (Nothing, low)
+  (defaultPlainFont, low) <-
+    case low of
+      (ControlWord "deff" (Just index) : rest) ->
+        return (Just index, rest)
+      _ -> return (Nothing, low)
+  (defaultBidirectionalFont, low) <-
+    case low of
+      (ControlWord "adeff" (Just index) : rest) ->
+        return (Just index, rest)
+      _ -> return (Nothing, low)
+  (defaultStylesheetFonts, low) <-
+    case low of
+      (ControlWord "stshfdbch" (Just eastAsianIndex)
+       : ControlWord "stshfloch" (Just plainIndex)
+       : ControlWord "stshfhich" (Just highIndex)
+       : ControlWord "stshfbi" (Just bidirectionalIndex)
+       : rest) ->
+        return (Just $ StylesheetFonts {
+                           stylesheetFontsEastAsian = eastAsianIndex,
+                           stylesheetFontsPlain = plainIndex,
+                           stylesheetFontsHigh = highIndex,
+                           stylesheetFontsBidirectional = bidirectionalIndex
+                         },
+                rest)
+      _ -> return (Nothing, low)
+  (defaultPlainLanguage, low) <-
+    case low of
+      (ControlWord "deflang" (Just index) : rest) ->
+        return (Just index, rest)
+      _ -> return (Nothing, low)
+  (defaultEastAsianLanguage, low) <-
+    case low of
+      (ControlWord "deflangfe" (Just index) : rest) ->
+        return (Just index, rest)
+      _ -> return (Nothing, low)
+  (defaultMiddleEasternLanguage, low) <-
+    case low of
+      (ControlWord "adeflang" (Just index) : rest) ->
+        return (Just index, rest)
+      _ -> return (Nothing, low)
+  (fontTable, low) <-
+    case low of
+      (Group (ControlWord "fonttbl" Nothing : table) : rest) -> do
+        table <- parseFontTable table
+        return (Just table, rest)
+      _ -> return (Nothing, low)
+  return (Header {
+              headerVersion = version,
+              headerFbidis = fbidis,
+              headerCharacterSet = characterSet,
+              headerCodepage = codepage,
+              headerFrom = from,
+              headerDefaultPlainFont = defaultPlainFont,
+              headerDefaultBidirectionalFont = defaultBidirectionalFont,
+              headerDefaultStylesheetFonts = defaultStylesheetFonts,
+              headerDefaultPlainLanguage = defaultPlainLanguage,
+              headerDefaultEastAsianLanguage = defaultEastAsianLanguage,
+              headerDefaultMiddleEasternLanguage = defaultMiddleEasternLanguage,
+              headerFontTable = fontTable
+            },
+          low)
+
+
+parseFontTable :: [LowRTF] -> Maybe FontTable
+parseFontTable low = do
+  case low of
+    [] -> return ()
+    _ -> Nothing
+  return FontTable {
+           }
+
+
+{-
+\rtf1 \fbidis? <character set> <from>? <deffont> <deflang> <fonttbl>? <filetbl>? <colortbl>? <stylesheet>? <stylerestrictions>? <listtables>? <revtbl>? <rsidtable>? <mathprops>? <generator>?
+-}
+
+parseBody :: [LowRTF] -> Maybe [Paragraph]
 parseBody low = do
-  flatText <- flatten low
-  return [Paragraph {
-              paragraphText = flatText
-            }]
+  flatText <- mapM flatten low >>= return . T.concat
+  return $ map (\text ->
+                  Paragraph {
+                      paragraphText = text
+                    })
+               (T.splitOn "\n\n" flatText)
 
 
 flatten :: LowRTF -> Maybe T.Text
 flatten (ControlWord _ _) = return T.empty
+flatten (ControlSymbol '\n') = return "\n"
 flatten (ControlSymbol _) = return T.empty
 flatten (Group items) = mapM flatten items >>= return . T.concat
 flatten (Text text) = return text
